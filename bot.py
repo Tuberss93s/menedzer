@@ -3,13 +3,13 @@ import re
 import os
 import asyncio
 
-# --- KONFIGURACJA (POBIERANA Z RAILWAY) ---
+# --- KONFIGURACJA ---
 TOKEN = os.getenv('DISCORD_TOKEN') 
 KANAL_PARTNERSTWA_ID = 1476971697507795177
 KANAL_KORE_LOGS_ID = 1480639848862716185 
 MOJE_ID_SERWERA = 1476957231034663153
+ADMIN_ID = 1347691963008286781  # Twoje ID właściciela
 
-# --- TWOJA PEŁNA REKLAMA (TYLKO PSC) ---
 MOJA_REKLAMA = """
 # 💎 **ᴋᴏʀᴇ sʜ0ᴘ — ᴘʀᴇᴍɪᴜᴍ ᴅɪsᴄᴏʀᴅ sᴇʀᴠɪᴄᴇs** 💎
 
@@ -46,23 +46,35 @@ Szukasz profesjonalnych usług, kont do gier lub boostów? **ᴋᴏʀᴇ sʜ0ᴘ
 class InstantKore(discord.Client):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.ostatni_serwer = "Brak"
-        self.uzyte_serwery = set()
+        self.ostatni_serwer = "Wczytywanie..."
+        self.uzyte_serwery = {} # ID_GUILD: ID_MESSAGE_LOGS
+        self.aktywne_sesje = {} # USER_ID: LAST_ACTIVITY_TIMESTAMP
 
     async def load_db_from_discord(self):
-        """Wczytuje bazę partnerstw z historii kanału logów"""
+        """Pobiera bazę danych oraz nazwę ostatniego serwera z historii logów"""
         await self.wait_until_ready()
         baza_ch = self.get_channel(KANAL_KORE_LOGS_ID)
         if baza_ch:
-            print("⏳ Wczytywanie bazy partnerstw z historii...")
-            async for msg in baza_ch.history(limit=1000):
+            print("⏳ Wczytywanie bazy partnerstw i ostatniego serwera...")
+            messages = []
+            async for msg in baza_ch.history(limit=500):
+                messages.append(msg)
                 match = re.search(r'ID_SERWERA: (\d+)', msg.content)
                 if match:
-                    self.uzyte_serwery.add(match.group(1))
-            print(f"✅ Załadowano {len(self.uzyte_serwery)} partnerstw.")
+                    self.uzyte_serwery[match.group(1)] = msg.id
+            
+            # Pobieranie nazwy ostatniego serwera z najnowszej wiadomości w logach
+            if messages:
+                for m in messages: # Pierwsza od góry (najnowsza)
+                    name_match = re.search(r'🏠 Serwer: (.+)', m.content)
+                    if name_match:
+                        self.ostatni_serwer = name_match.group(1)
+                        break
+            else:
+                self.ostatni_serwer = "Brak"
+            print(f"✅ Załadowano {len(self.uzyte_serwery)} partnerstw. Ostatni: {self.ostatni_serwer}")
 
     async def status_rotator(self):
-        """Dynamiczna pętla statusów (zmiana co 4 sekundy)"""
         await self.wait_until_ready()
         while not self.is_closed():
             messages = [
@@ -79,43 +91,75 @@ class InstantKore(discord.Client):
             ]
             for msg in messages:
                 await self.change_presence(activity=discord.CustomActivity(name=msg))
-                await asyncio.sleep(4) # Przyspieszone do 4 sekund
+                await asyncio.sleep(4)
 
     async def on_ready(self):
         print("-" * 30)
-        print(f'✅ KORE MANAGER ONLINE')
-        print(f'👤 Developer: kitsune_2520zapas')
+        print(f'✅ KORE MANAGER ONLINE | Admin ID: {ADMIN_ID}')
         print("-" * 30)
         self.loop.create_task(self.status_rotator())
         self.loop.create_task(self.load_db_from_discord())
 
     async def on_message(self, message):
         if message.author.id == self.user.id: return
+
+        # --- KOMENDA: USUŃ PARTNERSTWO ---
+        if message.content.startswith("!usun") and message.author.id == ADMIN_ID:
+            try:
+                guild_id = message.content.split()[1]
+                if guild_id in self.uzyte_serwery:
+                    log_ch = self.get_channel(KANAL_KORE_LOGS_ID)
+                    
+                    # Pobieranie logu, aby wyciągnąć ID użytkownika przed usunięciem
+                    msg_log = await log_ch.fetch_message(self.uzyte_serwery[guild_id])
+                    user_match = re.search(r'ID_USER: (\d+)', msg_log.content)
+                    
+                    if user_match:
+                        try:
+                            user = await self.fetch_user(int(user_match.group(1)))
+                            await user.send("⚠️ **ɪɴғᴏʀᴍᴀᴄᴊᴀ sʏsᴛᴇᴍᴏᴡᴀ — ᴋᴏʀᴇ sʜ0ᴘ**\nTwoja współpraca została zakończona lub zamknięta przez właściciela.")
+                        except: pass # DM zablokowane
+                    
+                    await msg_log.delete()
+                    del self.uzyte_serwery[guild_id]
+                    await message.channel.send(f"✅ Partnerstwo {guild_id} zostało usunięte z bazy danych i logów.")
+                else:
+                    await message.channel.send("❌ Nie znaleziono serwera o takim ID w bazie.")
+            except:
+                await message.channel.send("❌ Poprawne użycie: `!usun [ID_SERWERA]`")
+            return
+
         if not isinstance(message.channel, discord.DMChannel): return
 
         content_upper = message.content.upper()
-        log_ch = self.get_channel(KANAL_KORE_LOGS_ID)
-        part_ch = self.get_channel(KANAL_PARTNERSTWA_ID)
 
-        # KOMENDA: PARTNERSTWO
         if "PARTNERSTWO" in content_upper:
+            self.aktywne_sesje[message.author.id] = asyncio.get_event_loop().time()
             await message.channel.send(MOJA_REKLAMA)
             await message.channel.send("🤝 **KROKI:**\n1. Wstaw reklamę powyżej u siebie.\n2. Wklej tutaj **TWOJĄ REKLAMĘ**.\n3. Napisz **GOTOWE**.")
+            
+            # Obsługa timeoutu 15 minut
+            await asyncio.sleep(900)
+            if message.author.id in self.aktywne_sesje:
+                if asyncio.get_event_loop().time() - self.aktywne_sesje[message.author.id] >= 900:
+                    await message.channel.send("⌛ Przykro mi, ale musisz zacząć od nowa ponieważ trzeba było za długo czekać (15 minut).")
+                    del self.aktywne_sesje[message.author.id]
             return
 
-        # KOMENDA: GOTOWE
         if "GOTOWE" in content_upper:
-            target_reklama = None
-            invite_url = None
+            if message.author.id not in self.aktywne_sesje:
+                await message.channel.send("❌ Twoja sesja wygasła. Napisz `Partnerstwo` aby zacząć od nowa.")
+                return
+
+            target_reklama, invite_url = None, None
             async for msg in message.channel.history(limit=15):
                 inv_match = re.search(r'(discord\.(gg|io|me|li)\/.+|discord\.com\/invite\/.+)', msg.content)
                 if inv_match and "9jUSJcT2PF" not in inv_match.group(0):
-                    target_reklama = msg.content
-                    invite_url = inv_match.group(0)
+                    target_reklama, invite_url = msg.content, inv_match.group(0)
                     break
 
             if not target_reklama:
-                await message.channel.send("❌ Nie znalazłem Twojej reklamy w DM. Wklej ją najpierw!")
+                await message.channel.send("❌ Nie znalazłem Twojej reklamy. Wklej ją i napisz GOTOWE.")
                 return
 
             try:
@@ -130,25 +174,21 @@ class InstantKore(discord.Client):
                     await message.channel.send("❌ Ten serwer już brał udział w partnerstwie!")
                     return
 
-                if part_ch:
-                    # Wysyłka reklamy partnera
+                part_ch = self.get_channel(KANAL_PARTNERSTWA_ID)
+                log_ch = self.get_channel(KANAL_KORE_LOGS_ID)
+
+                if part_ch and log_ch:
                     await part_ch.send(f"🤝 **ɴᴏᴡᴇ ᴘᴀʀᴛɴᴇʀsᴛᴡᴏ**\nOd: {message.author.mention}\n\n{target_reklama}")
                     
-                    # Logowanie do bazy i pamięci
-                    self.uzyte_serwery.add(guild_id_str)
-                    self.ostatni_serwer = invite.guild.name
-                    await message.channel.send(f"✅ **Sukces!** Partnerstwo zaakceptowane.")
+                    # Wysyłka logów z ID_USER dla systemu usuwania
+                    new_log = await log_ch.send(f"📂 **NOWE DANE**\nID_SERWERA: {guild_id_str}\nID_USER: {message.author.id}\n🏠 Serwer: {invite.guild.name}\n🔗 Link: {invite_url}")
                     
-                    if log_ch:
-                        await log_ch.send(f"📂 **NOWE DANE**\nID_SERWERA: {guild_id_str}\n👤 Od: {message.author}\n🏠 Serwer: {invite.guild.name}\n🔗 Link: {invite_url}")
-                else:
-                    await message.channel.send("❌ Błąd: Brak dostępu do kanału partnerstw.")
-            except Exception:
-                await message.channel.send("❌ Błąd: Link wygasł lub jest niepoprawny.")
+                    self.uzyte_serwery[guild_id_str] = new_log.id
+                    self.ostatni_serwer = invite.guild.name
+                    if message.author.id in self.aktywne_sesje: del self.aktywne_sesje[message.author.id]
+                    await message.channel.send(f"✅ **Sukces!** Partnerstwo zaakceptowane.")
+            except:
+                await message.channel.send("❌ Błąd linku zaproszenia.")
 
-if __name__ == "__main__":
-    if not TOKEN:
-        print("❌ BŁĄD: Brak zmiennej DISCORD_TOKEN na Railway!")
-    else:
-        client = InstantKore()
-        client.run(TOKEN)
+client = InstantKore()
+client.run(TOKEN)
