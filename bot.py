@@ -3,7 +3,7 @@ import re
 import os
 import asyncio
 
-# --- KONFIGURACJA ---
+# --- KONFIGURACJA (POBIERANA Z RAILWAY) ---
 TOKEN = os.getenv('DISCORD_TOKEN') 
 KANAL_PARTNERSTWA_ID = 1476971697507795177
 KANAL_KORE_LOGS_ID = 1480639848862716185 
@@ -50,10 +50,11 @@ class InstantKore(discord.Client):
         self.uzyte_serwery = set()
 
     async def load_db_from_discord(self):
+        """Wczytuje bazę partnerstw z historii kanału logów"""
         await self.wait_until_ready()
         baza_ch = self.get_channel(KANAL_KORE_LOGS_ID)
         if baza_ch:
-            print("⏳ Wczytywanie bazy partnerstw...")
+            print("⏳ Wczytywanie bazy partnerstw z historii...")
             async for msg in baza_ch.history(limit=1000):
                 match = re.search(r'ID_SERWERA: (\d+)', msg.content)
                 if match:
@@ -61,6 +62,7 @@ class InstantKore(discord.Client):
             print(f"✅ Załadowano {len(self.uzyte_serwery)} partnerstw.")
 
     async def status_rotator(self):
+        """Dynamiczna pętla statusów (zmiana co 4 sekundy)"""
         await self.wait_until_ready()
         while not self.is_closed():
             messages = [
@@ -77,11 +79,12 @@ class InstantKore(discord.Client):
             ]
             for msg in messages:
                 await self.change_presence(activity=discord.CustomActivity(name=msg))
-                await asyncio.sleep(8)
+                await asyncio.sleep(4) # Przyspieszone do 4 sekund
 
     async def on_ready(self):
         print("-" * 30)
         print(f'✅ KORE MANAGER ONLINE')
+        print(f'👤 Developer: kitsune_2520zapas')
         print("-" * 30)
         self.loop.create_task(self.status_rotator())
         self.loop.create_task(self.load_db_from_discord())
@@ -94,11 +97,13 @@ class InstantKore(discord.Client):
         log_ch = self.get_channel(KANAL_KORE_LOGS_ID)
         part_ch = self.get_channel(KANAL_PARTNERSTWA_ID)
 
+        # KOMENDA: PARTNERSTWO
         if "PARTNERSTWO" in content_upper:
             await message.channel.send(MOJA_REKLAMA)
             await message.channel.send("🤝 **KROKI:**\n1. Wstaw reklamę powyżej u siebie.\n2. Wklej tutaj **TWOJĄ REKLAMĘ**.\n3. Napisz **GOTOWE**.")
             return
 
+        # KOMENDA: GOTOWE
         if "GOTOWE" in content_upper:
             target_reklama = None
             invite_url = None
@@ -110,7 +115,7 @@ class InstantKore(discord.Client):
                     break
 
             if not target_reklama:
-                await message.channel.send("❌ Nie znalazłem Twojej reklamy w DM.")
+                await message.channel.send("❌ Nie znalazłem Twojej reklamy w DM. Wklej ją najpierw!")
                 return
 
             try:
@@ -122,25 +127,28 @@ class InstantKore(discord.Client):
                     return
 
                 if guild_id_str in self.uzyte_serwery:
-                    await message.channel.send("❌ Ten serwer już u nas jest!")
+                    await message.channel.send("❌ Ten serwer już brał udział w partnerstwie!")
                     return
 
                 if part_ch:
+                    # Wysyłka reklamy partnera
                     await part_ch.send(f"🤝 **ɴᴏᴡᴇ ᴘᴀʀᴛɴᴇʀsᴛᴡᴏ**\nOd: {message.author.mention}\n\n{target_reklama}")
+                    
+                    # Logowanie do bazy i pamięci
                     self.uzyte_serwery.add(guild_id_str)
                     self.ostatni_serwer = invite.guild.name
                     await message.channel.send(f"✅ **Sukces!** Partnerstwo zaakceptowane.")
                     
                     if log_ch:
-                        await log_ch.send(f"📂 **NOWE DANE**\nID_SERWERA: {guild_id_str}\n👤 Użytkownik: {message.author}\n🏠 Serwer: {invite.guild.name}\n🔗 Link: {invite_url}")
+                        await log_ch.send(f"📂 **NOWE DANE**\nID_SERWERA: {guild_id_str}\n👤 Od: {message.author}\n🏠 Serwer: {invite.guild.name}\n🔗 Link: {invite_url}")
                 else:
-                    await message.channel.send("❌ Błąd kanału partnerstw.")
+                    await message.channel.send("❌ Błąd: Brak dostępu do kanału partnerstw.")
             except Exception:
-                await message.channel.send("❌ Błąd linku.")
+                await message.channel.send("❌ Błąd: Link wygasł lub jest niepoprawny.")
 
 if __name__ == "__main__":
     if not TOKEN:
-        print("❌ BRAK TOKENA!")
+        print("❌ BŁĄD: Brak zmiennej DISCORD_TOKEN na Railway!")
     else:
         client = InstantKore()
         client.run(TOKEN)
