@@ -1,17 +1,15 @@
 import discord
-import json
 import re
 import os
 import asyncio
 
-# --- KONFIGURACJA ZMIENNYCH ---
-# Pobiera token bezpiecznie z ustawień Railway (zmienna DISCORD_TOKEN)
+# --- KONFIGURACJA ---
 TOKEN = os.getenv('DISCORD_TOKEN') 
 KANAL_PARTNERSTWA_ID = 1476971697507795177
-KANAL_BAZA_DANYCH_ID = 1480552897279164528
+KANAL_KORE_LOGS_ID = 1480639848862716185 
 MOJE_ID_SERWERA = 1476957231034663153
 
-# --- TWOJA PEŁNA REKLAMA ---
+# --- TWOJA PEŁNA REKLAMA (TYLKO PSC) ---
 MOJA_REKLAMA = """
 # 💎 **ᴋᴏʀᴇ sʜ0ᴘ — ᴘʀᴇᴍɪᴜᴍ ᴅɪsᴄᴏʀᴅ sᴇʀᴠɪᴄᴇs** 💎
 
@@ -36,7 +34,7 @@ Szukasz profesjonalnych usług, kont do gier lub boostów? **ᴋᴏʀᴇ sʜ0ᴘ
 ---
 
 ### 💳 **ᴘᴌᴀᴛɴᴏśᴄɪ ɪ ʀᴇᴀʟɪᴢᴀᴄᴊᴀ:**
-* 〢🎫 **ᴘᴀʏsᴀғᴇᴄᴀʀᴅ (ᴘsᴄ)** — Szybko i anonimowo.
+* 〢🎫 **ᴘᴀʏsᴀғᴇᴄᴀʀᴅ (ᴘsᴄ)** — Jedyna akceptowana metoda płatności.
 * 〢⚡ **ᴛɪᴄᴋᴇᴛ 1:1:** Wszystko ustalamy indywidualnie na tickecie.
 * 〢🛡️ **ʟᴇɢɪᴛ:** Sprawdź nasze opinie na kanale <#1476961244463239180>.
 
@@ -45,14 +43,22 @@ Szukasz profesjonalnych usług, kont do gier lub boostów? **ᴋᴏʀᴇ sʜ0ᴘ
 🔗 **ᴅᴏᴌᴀ̨ᴄᴢ ᴅᴏ ɴᴀs:** https://discord.gg/9jUSJcT2PF
 """
 
-DB_FILE = 'active_partnerships.json'
-if not os.path.exists(DB_FILE):
-    with open(DB_FILE, 'w') as f: json.dump({}, f)
-
 class InstantKore(discord.Client):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ostatni_serwer = "Brak"
+        self.uzyte_serwery = set()
+
+    async def load_db_from_discord(self):
+        await self.wait_until_ready()
+        baza_ch = self.get_channel(KANAL_KORE_LOGS_ID)
+        if baza_ch:
+            print("⏳ Wczytywanie bazy partnerstw...")
+            async for msg in baza_ch.history(limit=1000):
+                match = re.search(r'ID_SERWERA: (\d+)', msg.content)
+                if match:
+                    self.uzyte_serwery.add(match.group(1))
+            print(f"✅ Załadowano {len(self.uzyte_serwery)} partnerstw.")
 
     async def status_rotator(self):
         await self.wait_until_ready()
@@ -62,25 +68,31 @@ class InstantKore(discord.Client):
                 "✅ Czekanie na partnerstwa",
                 "🛠️ MADE IN KORE SH0P",
                 "💎 discord.gg/9jUSJcT2PF",
-                f"🤝 OSTATNIE: {self.ostatni_serwer}"
+                f"🤝 OSTATNIE: {self.ostatni_serwer}",
+                "📦 Nowe dostawy wleciały!",
+                "💳 Płatności: TYLKO PSC 🎫",
+                "🛡️ 100% Legit & Verified",
+                "🎫 Otwórz Ticket by kupić",
+                "🚀 Najszybsza realizacja"
             ]
             for msg in messages:
                 await self.change_presence(activity=discord.CustomActivity(name=msg))
-                await asyncio.sleep(7)
+                await asyncio.sleep(8)
 
     async def on_ready(self):
         print("-" * 30)
         print(f'✅ KORE MANAGER ONLINE')
-        print(f'👤 Developer: kitsune_2520zapas')
         print("-" * 30)
         self.loop.create_task(self.status_rotator())
+        self.loop.create_task(self.load_db_from_discord())
 
     async def on_message(self, message):
         if message.author.id == self.user.id: return
         if not isinstance(message.channel, discord.DMChannel): return
 
         content_upper = message.content.upper()
-        baza_ch = self.get_channel(KANAL_BAZA_DANYCH_ID)
+        log_ch = self.get_channel(KANAL_KORE_LOGS_ID)
+        part_ch = self.get_channel(KANAL_PARTNERSTWA_ID)
 
         if "PARTNERSTWO" in content_upper:
             await message.channel.send(MOJA_REKLAMA)
@@ -90,7 +102,6 @@ class InstantKore(discord.Client):
         if "GOTOWE" in content_upper:
             target_reklama = None
             invite_url = None
-
             async for msg in message.channel.history(limit=15):
                 inv_match = re.search(r'(discord\.(gg|io|me|li)\/.+|discord\.com\/invite\/.+)', msg.content)
                 if inv_match and "9jUSJcT2PF" not in inv_match.group(0):
@@ -99,47 +110,37 @@ class InstantKore(discord.Client):
                     break
 
             if not target_reklama:
-                await message.channel.send("❌ Nie znalazłem Twojej reklamy w DM. Wklej ją najpierw, potem napisz GOTOWE.")
+                await message.channel.send("❌ Nie znalazłem Twojej reklamy w DM.")
                 return
 
             try:
                 invite = await self.fetch_invite(invite_url)
+                guild_id_str = str(invite.guild.id)
+
                 if invite.guild.id == MOJE_ID_SERWERA:
-                    await message.channel.send("❌ To jest link do mojego serwera!")
+                    await message.channel.send("❌ To mój serwer!")
                     return
 
-                # Wczytywanie bazy
-                if not os.path.exists(DB_FILE):
-                    with open(DB_FILE, 'w') as f: json.dump({}, f)
-                
-                with open(DB_FILE, 'r') as f: db = json.load(f)
-                
-                if str(invite.guild.id) in db:
-                    await message.channel.send("❌ Ten serwer już brał udział w partnerstwie!")
+                if guild_id_str in self.uzyte_serwery:
+                    await message.channel.send("❌ Ten serwer już u nas jest!")
                     return
 
-                log_ch = self.get_channel(KANAL_PARTNERSTWA_ID)
-                if log_ch:
-                    await log_ch.send(f"🤝 **ɴᴏᴡᴇ ᴘᴀʀᴛɴᴇʀsᴛᴡᴏ**\nOd: {message.author.mention}\n\n{target_reklama}")
-                    
-                    db[str(invite.guild.id)] = message.author.id
-                    with open(DB_FILE, 'w') as f: json.dump(db, f)
-                    
+                if part_ch:
+                    await part_ch.send(f"🤝 **ɴᴏᴡᴇ ᴘᴀʀᴛɴᴇʀsᴛᴡᴏ**\nOd: {message.author.mention}\n\n{target_reklama}")
+                    self.uzyte_serwery.add(guild_id_str)
                     self.ostatni_serwer = invite.guild.name
                     await message.channel.send(f"✅ **Sukces!** Partnerstwo zaakceptowane.")
                     
-                    if baza_ch:
-                        await baza_ch.send(f"📂 **NOWE DANE DO SPRAWDZENIA**\n👤 Od: {message.author}\n🏠 Serwer: {invite.guild.name}\n🔗 Link: {invite_url}")
+                    if log_ch:
+                        await log_ch.send(f"📂 **NOWE DANE**\nID_SERWERA: {guild_id_str}\n👤 Użytkownik: {message.author}\n🏠 Serwer: {invite.guild.name}\n🔗 Link: {invite_url}")
                 else:
-                    await message.channel.send("❌ Błąd: Nie widzę kanału partnerstw.")
-
-            except Exception as e:
-                await message.channel.send("❌ Zły link.")
-                if baza_ch: await baza_ch.send(f"⚠️ Błąd u {message.author}: {e}")
+                    await message.channel.send("❌ Błąd kanału partnerstw.")
+            except Exception:
+                await message.channel.send("❌ Błąd linku.")
 
 if __name__ == "__main__":
     if not TOKEN:
-        print("❌ BŁĄD: Brak zmiennej DISCORD_TOKEN w ustawieniach Railway!")
+        print("❌ BRAK TOKENA!")
     else:
         client = InstantKore()
         client.run(TOKEN)
